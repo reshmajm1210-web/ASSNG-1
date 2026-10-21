@@ -1,9 +1,10 @@
 import { routes } from '@/shared/route-paths'
 import { invoiceTotal, SavedBill } from '@/shipping-bills/model'
 import { shippingBillService } from '@/shipping-bills/shipping-bill-service'
+import { useQuery } from 'core/react-query'
 import { navigate } from 'core/routing'
 import { toast } from 'core/toast-manager'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Badge } from 'ui/basic/badge'
 import { Button } from 'ui/basic/button'
 import { Card, CardContent } from 'ui/basic/card'
@@ -11,41 +12,31 @@ import { Table } from 'ui/basic/table'
 import { Input } from 'ui/inputs/input'
 
 export default function ListDashboard() {
-  const [bills, setBills] = useState<SavedBill[]>(() => shippingBillService.getInitialBills())
   const [search, setSearch] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
-  const fetchBills = async () => {
-    setIsLoading(true)
+  const billsQuery = useQuery({
+    queryKey: ['shipping-bills'],
+    queryFn: () => shippingBillService.list()
+  })
+  const bills = billsQuery.data ?? []
+
+  async function handleSync() {
     try {
-      const remoteBills = await shippingBillService.list()
-      if (remoteBills && remoteBills.length > 0) {
-        setBills(remoteBills)
-        toast.success(`Loaded ${remoteBills.length} shipping bills`)
-      }
-    } catch (err: any) {
-      console.warn('Backend API listing notice:', err)
-    } finally {
-      setIsLoading(false)
+      const remoteBills = await billsQuery.refetch()
+      if (remoteBills.data) toast.success(`Loaded ${remoteBills.data.length} shipping bills`)
+    } catch {
+      toast.error('Failed to load shipping bills')
     }
   }
 
-  useEffect(() => {
-    fetchBills()
-  }, [])
-
-  const handleDownloadFlatFile = async (bill: SavedBill) => {
+  async function handleDownloadFlatFile(bill: SavedBill) {
     try {
       setDownloadingId(bill.id)
-      const res = await shippingBillService.downloadFlatFile(bill.id, bill)
-      if (res.source === 'api') {
-        toast.success('Flat file downloaded from backend API')
-      } else {
-        toast.success(`Flat file (.sb) generated and downloaded for #${bill.values.jobNumber || bill.id}`)
-      }
-    } catch (err: any) {
-      console.warn('Flat file notice:', err)
+      await shippingBillService.downloadFlatFile(bill.id, bill)
+      const jobLabel = bill.values.jobNumber ?? bill.id
+      toast.success(`Flat file (.sb) generated and downloaded for #${jobLabel}`)
+    } catch {
       toast.error('Failed to generate flat file')
     } finally {
       setDownloadingId(null)
@@ -54,8 +45,8 @@ export default function ListDashboard() {
 
   const filtered = bills
     .filter((bill) => {
-      const exporter = bill.values.exporterName || ''
-      const consignee = bill.values.consigneeName || ''
+      const exporter = bill.values.exporterName ?? ''
+      const consignee = bill.values.consigneeName ?? ''
       return [
         bill.id,
         bill.values.jobNumber,
@@ -85,8 +76,8 @@ export default function ListDashboard() {
           <p className="mt-1 text-sm text-gray-500">Create and continue the shipping bill step of each export job.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={fetchBills} disabled={isLoading}>
-            {isLoading ? 'Syncing...' : 'Sync from API'}
+          <Button variant="outline" size="sm" onClick={() => void handleSync()} disabled={billsQuery.isFetching}>
+            {billsQuery.isFetching ? 'Syncing...' : 'Sync from API'}
           </Button>
           <Button onClick={() => navigate(routes.shippingBillNew)}>+ New shipping bill</Button>
         </div>
@@ -128,7 +119,19 @@ export default function ListDashboard() {
               {filtered.length} {filtered.length === 1 ? 'bill' : 'bills'}
             </span>
           </div>
-          {filtered.length ? (
+          {billsQuery.isLoading ? (
+            <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center">
+              <p className="font-medium">Loading shipping bills...</p>
+            </div>
+          ) : billsQuery.isError ? (
+            <div className="rounded-lg border border-dashed border-red-300 p-10 text-center">
+              <p className="font-medium text-red-600">Failed to load shipping bills</p>
+              <p className="mt-1 text-sm text-gray-500">The mock service could not return the bill list.</p>
+              <Button className="mt-4" variant="outline" onClick={() => void billsQuery.refetch()}>
+                Try again
+              </Button>
+            </div>
+          ) : filtered.length ? (
             <Table>
               <thead>
                 <tr>
@@ -143,8 +146,8 @@ export default function ListDashboard() {
               </thead>
               <tbody>
                 {filtered.map((bill) => {
-                  const exporterName = bill.values.exporterName || '—'
-                  const consigneeName = bill.values.consigneeName || '—'
+                  const exporterName = orDisplay(bill.values.exporterName, '—')
+                  const consigneeName = orDisplay(bill.values.consigneeName, '—')
                   const total = bill.values.invoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0)
                   return (
                     <tr key={bill.id}>
@@ -157,7 +160,8 @@ export default function ListDashboard() {
                         <span className="block text-xs text-gray-500">to {consigneeName}</span>
                       </td>
                       <td>
-                        {bill.values.loadingPort || '—'} → {bill.values.finalDestinationPort || '—'}
+                        {bill.values.loadingPort ? bill.values.loadingPort : '—'} →{' '}
+                        {bill.values.finalDestinationPort ? bill.values.finalDestinationPort : '—'}
                       </td>
                       <td>
                         {bill.values.invoices.length}
@@ -179,7 +183,7 @@ export default function ListDashboard() {
                             variant="outline"
                             size="sm"
                             disabled={downloadingId === bill.id}
-                            onClick={() => handleDownloadFlatFile(bill)}>
+                            onClick={() => void handleDownloadFlatFile(bill)}>
                             {downloadingId === bill.id ? 'Downloading...' : 'Flat File'}
                           </Button>
                           <Button
@@ -212,4 +216,9 @@ export default function ListDashboard() {
       </Card>
     </div>
   )
+}
+
+function orDisplay(value: string | undefined, fallback: string): string {
+  if (value) return value
+  return fallback
 }

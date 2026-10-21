@@ -1,10 +1,43 @@
-import { getDemoData } from './demo-store'
+import {
+  getDemoData,
+  saveBranch as persistBranch,
+  saveBusiness as persistBusiness,
+  saveExporter as persistExporter,
+  useDemoData
+} from './demo-store'
+import { delay } from './mock-network'
 import { Branch, Business, Exporter, loadingPorts, PortOption, ports } from './model'
 
-const MOCK_DELAY_MS = 250
+/**
+ * Async mock service for parties (exporters, consignees/buyers/third parties),
+ * their branches, and ports. Only this service and the shipping bill service may
+ * touch the demo store; UI code must call these functions.
+ */
 
-function delay<T>(value: T, ms = MOCK_DELAY_MS): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), ms))
+export interface ExporterInput {
+  id?: number
+  name: string
+  iec: string
+  class: string
+  type: string
+  pan?: string
+  tan?: string
+  aeoNumber?: string
+  website?: string
+  notes?: string
+  disabled?: boolean
+  firstBranch?: Omit<Branch, 'id'>
+}
+
+export interface BusinessInput {
+  id?: number
+  name: string
+  iec?: string
+  isConsignee: boolean
+  isBuyer: boolean
+  isNotify: boolean
+  isThirdParty: boolean
+  firstBranch?: Omit<Branch, 'id'>
 }
 
 export const partyMockService = {
@@ -85,6 +118,31 @@ export const partyMockService = {
   },
 
   /**
+   * Create or update an Exporter (quick-add dialog)
+   */
+  async saveExporter(input: ExporterInput): Promise<Exporter> {
+    return delay(persistExporter(input))
+  },
+
+  /**
+   * Create or update a Business (consignee / buyer / third party quick-add dialog)
+   */
+  async saveBusiness(input: BusinessInput): Promise<Business> {
+    return delay(persistBusiness(input))
+  },
+
+  /**
+   * Add or update a branch of an exporter or business
+   */
+  async saveBranch(
+    kind: 'exporter' | 'business',
+    ownerId: number,
+    branch: Omit<Branch, 'id'> & { id?: number }
+  ): Promise<Branch> {
+    return delay(persistBranch(kind, ownerId, branch))
+  },
+
+  /**
    * Search Port of Loading (Indian ports: code starts with 'IN')
    */
   async searchLoadingPorts(query: string): Promise<PortOption[]> {
@@ -114,4 +172,10 @@ export const partyMockService = {
       100
     )
   }
+}
+
+/** Service-layer view over the mock store's parties; re-renders when quick-add dialogs save a party. */
+export function useParties() {
+  const { exporters, businesses } = useDemoData()
+  return { exporters, businesses }
 }

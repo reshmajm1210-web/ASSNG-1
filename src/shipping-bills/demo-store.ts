@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import { Branch, Business, Exporter, SavedBill, ShippingBillFormValues, toShippingBillPayload } from './model'
+import { Branch, Business, Exporter, SavedBill, ShippingBillFormValues } from './model'
+import { toShippingBillPayload } from './shipping-bill-payload'
 
 interface DemoData {
   exporters: Exporter[]
@@ -637,7 +638,7 @@ export function saveBill(values: ShippingBillFormValues, id?: number) {
 }
 
 export function syncBillsFromApi(apiBills: SavedBill[]) {
-  if (!apiBills || !apiBills.length) return
+  if (apiBills.length === 0) return
   const existingMap = new Map<number, SavedBill>()
   // Put existing bills first
   for (const b of snapshot.bills) {

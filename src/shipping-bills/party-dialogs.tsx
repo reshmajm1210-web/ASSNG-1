@@ -1,5 +1,6 @@
-import { saveBranch, saveBusiness, saveExporter } from '@/shipping-bills/demo-store'
-import { Branch, Business, countries, Exporter } from '@/shipping-bills/model'
+import { Branch, Business, Exporter } from '@/shipping-bills/model'
+import { partyMockService } from '@/shipping-bills/party-mock-service'
+import { useReferenceData } from '@/shipping-bills/reference-data-service'
 import { InferType, s, useForm } from 'core/form'
 import { Form, SubmitButton } from 'core/form/components'
 import { toast } from 'core/toast-manager'
@@ -46,6 +47,7 @@ interface PartyDialogProps {
 
 export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: PartyDialogProps) {
   const isNew = party == null
+  const referenceData = useReferenceData()
   const formCtx = useForm<PartyFields>(partySchema, {
     defaultValues: {
       name: party?.name ?? '',
@@ -71,7 +73,7 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
   })
   const { register } = formCtx.hooks
 
-  function handleSave(values: PartyFields) {
+  async function handleSave(values: PartyFields) {
     const firstBranch = isNew
       ? {
           branchName: values.branchName!,
@@ -82,31 +84,30 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
           countryCode: values.countryCode
         }
       : undefined
-    const saved =
-      kind === 'exporter'
-        ? saveExporter({
-            id: party?.id,
-            name: values.name.trim(),
-            iec: values.iec?.trim() ?? '',
-            class: values.class ?? 'F',
-            type: values.type ?? 'P',
-            pan: values.pan,
-            tan: values.tan,
-            aeoNumber: values.aeoNumber,
-            website: values.website,
-            notes: values.notes,
-            firstBranch
-          })
-        : saveBusiness({
-            id: party?.id,
-            name: values.name.trim(),
-            iec: values.iec,
-            isConsignee: !!values.isConsignee,
-            isBuyer: !!values.isBuyer,
-            isNotify: !!values.isNotify,
-            isThirdParty: !!values.isThirdParty,
-            firstBranch
-          })
+    const saved = await (kind === 'exporter'
+      ? partyMockService.saveExporter({
+          id: party?.id,
+          name: values.name.trim(),
+          iec: values.iec?.trim() ?? '',
+          class: values.class ?? 'F',
+          type: values.type ?? 'P',
+          pan: values.pan,
+          tan: values.tan,
+          aeoNumber: values.aeoNumber,
+          website: values.website,
+          notes: values.notes,
+          firstBranch
+        })
+      : partyMockService.saveBusiness({
+          id: party?.id,
+          name: values.name.trim(),
+          iec: values.iec,
+          isConsignee: !!values.isConsignee,
+          isBuyer: !!values.isBuyer,
+          isNotify: !!values.isNotify,
+          isThirdParty: !!values.isThirdParty,
+          firstBranch
+        }))
     toast.success(`${kind === 'exporter' ? 'Exporter' : 'Business'} saved`)
     onSaved?.(saved)
     onClose()
@@ -135,22 +136,9 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
                   <Select<PartyFields>
                     label="Exporter class"
                     name="class"
-                    options={[
-                      { value: 'F', label: 'Manufacturer' },
-                      { value: 'R', label: 'Merchant' },
-                      { value: 'C', label: 'Merchant courier' },
-                      { value: 'D', label: 'Manufacturer courier' }
-                    ]}
+                    options={referenceData?.exporterClasses ?? []}
                   />
-                  <Select<PartyFields>
-                    label="Exporter type"
-                    name="type"
-                    options={[
-                      { value: 'P', label: 'Private' },
-                      { value: 'G', label: 'Government' },
-                      { value: 'W', label: 'Warehouse' }
-                    ]}
-                  />
+                  <Select<PartyFields> label="Exporter type" name="type" options={referenceData?.exporterTypes ?? []} />
                 </>
               ) : (
                 <div className="sm:col-span-2">
@@ -195,7 +183,7 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
                   <Select<PartyFields>
                     label="Country"
                     name="countryCode"
-                    options={countries}
+                    options={referenceData?.countries ?? []}
                     placeholder="Select country"
                   />
                   <Input label="State / province" {...register('state')} />
@@ -242,13 +230,14 @@ interface BranchDialogProps {
 }
 
 export function BranchDialog({ kind, ownerId, branch, onClose, onSaved }: BranchDialogProps) {
+  const referenceData = useReferenceData()
   const formCtx = useForm<BranchFields>(branchSchema, {
     defaultValues: branch ?? { branchName: '', address1: '', city: '', countryCode: kind === 'exporter' ? 'IN' : '' }
   })
   const { register } = formCtx.hooks
 
-  function handleSave(values: BranchFields) {
-    const saved = saveBranch(kind, ownerId, { ...values, id: branch?.id })
+  async function handleSave(values: BranchFields) {
+    const saved = await partyMockService.saveBranch(kind, ownerId, { ...values, id: branch?.id })
     toast.success('Branch saved')
     onSaved?.(saved)
     onClose()
@@ -270,7 +259,7 @@ export function BranchDialog({ kind, ownerId, branch, onClose, onSaved }: Branch
               <Select<BranchFields>
                 label="Country"
                 name="countryCode"
-                options={countries}
+                options={referenceData?.countries ?? []}
                 placeholder="Select country"
               />
               <Input label="Email" type="email" {...register('email')} />
