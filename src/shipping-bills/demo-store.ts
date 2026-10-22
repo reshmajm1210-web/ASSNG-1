@@ -1,5 +1,13 @@
-import { useSyncExternalStore } from 'react'
-import { Branch, Business, Exporter, SavedBill, ShippingBillFormValues, toShippingBillPayload } from './model'
+/**
+ * Demo store — the only module that reads or writes browser localStorage.
+ *
+ * Services call the functions below; UI components never import this file.
+ * Replacing the mock with a real backend means removing this module and
+ * pointing the services at HTTP instead.
+ */
+
+import { Branch, Business, Exporter, SavedBill, ShippingBillFormValues } from './model'
+import { toShippingBillPayload } from './shipping-bill-payload'
 
 interface DemoData {
   exporters: Exporter[]
@@ -474,18 +482,17 @@ function publish(next: DemoData) {
   listeners.forEach((listener) => listener())
 }
 
-export function useDemoData() {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    () => snapshot
-  )
+/** Current in-memory copy of the persisted demo data. */
+export function getStoreSnapshot(): DemoData {
+  return snapshot
 }
 
-export function getDemoData() {
-  return snapshot
+/** Subscribe to store changes (used by the `useSavedBills` service hook). */
+export function subscribeStore(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
 }
 
 function nextId() {
@@ -575,12 +582,12 @@ export function deleteParty(kind: 'exporter' | 'business', id: number) {
     kind === 'exporter'
       ? bill.values.exporterId === String(id)
       : bill.values.consigneeId === String(id) ||
-      bill.values.invoices.some(
-        (invoice) =>
-          invoice.buyerId === String(id) ||
-          invoice.thirdPartyId === String(id) ||
-          invoice.items.some((item) => item.itemThirdPartyId === String(id))
-      )
+        bill.values.invoices.some(
+          (invoice) =>
+            invoice.buyerId === String(id) ||
+            invoice.thirdPartyId === String(id) ||
+            invoice.items.some((item) => item.itemThirdPartyId === String(id))
+        )
   )
   if (inUse) return false
   publish({
@@ -596,12 +603,12 @@ export function deleteBranch(kind: 'exporter' | 'business', ownerId: number, id:
     kind === 'exporter'
       ? bill.values.exporterBranchId === String(id)
       : bill.values.consigneeBranchId === String(id) ||
-      bill.values.invoices.some(
-        (invoice) =>
-          invoice.buyerBranchId === String(id) ||
-          invoice.thirdPartyBranchId === String(id) ||
-          invoice.items.some((item) => item.itemThirdPartyBranchId === String(id))
-      )
+        bill.values.invoices.some(
+          (invoice) =>
+            invoice.buyerBranchId === String(id) ||
+            invoice.thirdPartyBranchId === String(id) ||
+            invoice.items.some((item) => item.itemThirdPartyBranchId === String(id))
+        )
   )
   if (inUse) return false
   if (kind === 'exporter') {
@@ -634,21 +641,4 @@ export function saveBill(values: ShippingBillFormValues, id?: number) {
   }
   publish({ ...snapshot, bills: [record, ...snapshot.bills.filter((bill) => bill.id !== id)] })
   return record
-}
-
-export function syncBillsFromApi(apiBills: SavedBill[]) {
-  if (!apiBills || !apiBills.length) return
-  const existingMap = new Map<number, SavedBill>()
-  // Put existing bills first
-  for (const b of snapshot.bills) {
-    existingMap.set(b.id, b)
-  }
-  // Overlay/add API bills
-  for (const b of apiBills) {
-    existingMap.set(b.id, b)
-  }
-  publish({
-    ...snapshot,
-    bills: Array.from(existingMap.values())
-  })
 }

@@ -1,51 +1,49 @@
 import { routes } from '@/shared/route-paths'
 import { invoiceTotal, SavedBill } from '@/shipping-bills/model'
 import { shippingBillService } from '@/shipping-bills/shipping-bill-service'
+import { useQuery } from 'core/react-query'
 import { navigate } from 'core/routing'
 import { toast } from 'core/toast-manager'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Badge } from 'ui/basic/badge'
 import { Button } from 'ui/basic/button'
 import { Card, CardContent } from 'ui/basic/card'
 import { Table } from 'ui/basic/table'
 import { Input } from 'ui/inputs/input'
 
+/**
+ * Shipping bill list.
+ *
+ * Data comes from `shippingBillService.list()` through React Query, so caching,
+ * retries and the loading/error states are handled by the framework instead of
+ * hand-written `useEffect` code.
+ */
 export default function ListDashboard() {
-  const [bills, setBills] = useState<SavedBill[]>(() => shippingBillService.getInitialBills())
   const [search, setSearch] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
-  const fetchBills = async () => {
-    setIsLoading(true)
-    try {
-      const remoteBills = await shippingBillService.list()
-      if (remoteBills && remoteBills.length > 0) {
-        setBills(remoteBills)
-        toast.success(`Loaded ${remoteBills.length} shipping bills`)
-      }
-    } catch (err: any) {
-      console.warn('Backend API listing notice:', err)
-    } finally {
-      setIsLoading(false)
+  const billsQuery = useQuery({
+    queryKey: ['shipping-bills'],
+    queryFn: shippingBillService.list
+  })
+
+  const bills: SavedBill[] = billsQuery.data ?? []
+
+  async function handleRefresh() {
+    const result = await billsQuery.refetch()
+    if (result.isError) {
+      toast.error('Could not load shipping bills')
+      return
     }
+    toast.success(`Loaded ${result.data?.length ?? 0} shipping bills`)
   }
 
-  useEffect(() => {
-    fetchBills()
-  }, [])
-
-  const handleDownloadFlatFile = async (bill: SavedBill) => {
+  async function handleDownloadFlatFile(bill: SavedBill) {
     try {
       setDownloadingId(bill.id)
-      const res = await shippingBillService.downloadFlatFile(bill.id, bill)
-      if (res.source === 'api') {
-        toast.success('Flat file downloaded from backend API')
-      } else {
-        toast.success(`Flat file (.sb) generated and downloaded for #${bill.values.jobNumber || bill.id}`)
-      }
-    } catch (err: any) {
-      console.warn('Flat file notice:', err)
+      await shippingBillService.downloadFlatFile(bill.id, bill)
+      toast.success(`Flat file (.sb) generated and downloaded for #${bill.values.jobNumber ?? bill.id}`)
+    } catch {
       toast.error('Failed to generate flat file')
     } finally {
       setDownloadingId(null)
@@ -54,8 +52,8 @@ export default function ListDashboard() {
 
   const filtered = bills
     .filter((bill) => {
-      const exporter = bill.values.exporterName || ''
-      const consignee = bill.values.consigneeName || ''
+      const exporter = bill.values.exporterName ?? ''
+      const consignee = bill.values.consigneeName ?? ''
       return [
         bill.id,
         bill.values.jobNumber,
@@ -67,19 +65,14 @@ export default function ListDashboard() {
         .toLowerCase()
         .includes(search.toLowerCase())
     })
-    .sort((a, b) => {
-      const timeA = a.updated ? new Date(a.updated).getTime() : 0
-      const timeB = b.updated ? new Date(b.updated).getTime() : 0
-      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA)
+    .sort((first, second) => {
+      const firstTime = first.updated === '' ? 0 : new Date(first.updated).getTime()
+      const secondTime = second.updated === '' ? 0 : new Date(second.updated).getTime()
+      return (Number.isNaN(secondTime) ? 0 : secondTime) - (Number.isNaN(firstTime) ? 0 : firstTime)
     })
 
-  const uniqueExportersCount = new Set(
-    bills.map((b) => b.values.exporterName).filter(Boolean)
-  ).size
-
-  const uniqueConsigneesCount = new Set(
-    bills.map((b) => b.values.consigneeName).filter(Boolean)
-  ).size
+  const uniqueExportersCount = new Set(bills.map((bill) => bill.values.exporterName).filter(Boolean)).size
+  const uniqueConsigneesCount = new Set(bills.map((bill) => bill.values.consigneeName).filter(Boolean)).size
 
   return (
     <div className="space-y-6">
@@ -89,8 +82,8 @@ export default function ListDashboard() {
           <p className="mt-1 text-sm text-gray-500">Create and continue the shipping bill step of each export job.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={fetchBills} disabled={isLoading}>
-            {isLoading ? 'Syncing...' : 'Sync from API'}
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={billsQuery.isFetching}>
+            {billsQuery.isFetching ? 'Refreshing...' : 'Refresh'}
           </Button>
           <Button onClick={() => navigate(routes.shippingBillNew)}>+ New shipping bill</Button>
         </div>
@@ -106,13 +99,13 @@ export default function ListDashboard() {
         <Card>
           <CardContent className="pt-5">
             <p className="text-xs text-gray-500">Exporters</p>
-            <p className="mt-1 text-2xl font-semibold">{uniqueExportersCount || 1}</p>
+            <p className="mt-1 text-2xl font-semibold">{Math.max(uniqueExportersCount, 1)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-5">
             <p className="text-xs text-gray-500">Businesses / Consignees</p>
-            <p className="mt-1 text-2xl font-semibold">{uniqueConsigneesCount || 1}</p>
+            <p className="mt-1 text-2xl font-semibold">{Math.max(uniqueConsigneesCount, 1)}</p>
           </CardContent>
         </Card>
       </div>
@@ -132,7 +125,22 @@ export default function ListDashboard() {
               {filtered.length} {filtered.length === 1 ? 'bill' : 'bills'}
             </span>
           </div>
-          {filtered.length ? (
+
+          {billsQuery.isLoading ? (
+            <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center text-sm text-gray-500">
+              Loading shipping bills...
+            </div>
+          ) : billsQuery.isError ? (
+            <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center">
+              <p className="font-medium">Shipping bills could not be loaded</p>
+              <p className="mt-1 text-sm text-gray-500">
+                {billsQuery.error instanceof Error ? billsQuery.error.message : 'Please try again.'}
+              </p>
+              <Button className="mt-4" variant="outline" onClick={handleRefresh}>
+                Try again
+              </Button>
+            </div>
+          ) : filtered.length ? (
             <Table>
               <thead>
                 <tr>
@@ -147,13 +155,15 @@ export default function ListDashboard() {
               </thead>
               <tbody>
                 {filtered.map((bill) => {
-                  const exporterName = bill.values.exporterName || '—'
-                  const consigneeName = bill.values.consigneeName || '—'
+                  const exporterName = bill.values.exporterName ?? '—'
+                  const consigneeName = bill.values.consigneeName ?? '—'
                   const total = bill.values.invoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0)
                   return (
                     <tr key={bill.id}>
                       <td className="font-medium">
-                        {bill.values.jobNumber ? `#${bill.values.jobNumber}` : `Bill #${bill.id}`}
+                        {bill.values.jobNumber !== undefined && bill.values.jobNumber !== ''
+                          ? `#${bill.values.jobNumber}`
+                          : `Bill #${bill.id}`}
                         <span className="block text-xs font-normal text-gray-500">{bill.values.jobDate}</span>
                       </td>
                       <td>
@@ -161,7 +171,8 @@ export default function ListDashboard() {
                         <span className="block text-xs text-gray-500">to {consigneeName}</span>
                       </td>
                       <td>
-                        {bill.values.loadingPort || '—'} → {bill.values.finalDestinationPort || '—'}
+                        {bill.values.loadingPort !== '' ? bill.values.loadingPort : '—'} →{' '}
+                        {bill.values.finalDestinationPort !== '' ? bill.values.finalDestinationPort : '—'}
                       </td>
                       <td>
                         {bill.values.invoices.length}
@@ -172,7 +183,11 @@ export default function ListDashboard() {
                       <td>
                         <Badge variant="secondary">Draft</Badge>
                       </td>
-                      <td>{bill.updated && !isNaN(new Date(bill.updated).getTime()) ? new Date(bill.updated).toLocaleDateString() : '—'}</td>
+                      <td>
+                        {bill.updated !== '' && !Number.isNaN(new Date(bill.updated).getTime())
+                          ? new Date(bill.updated).toLocaleDateString()
+                          : '—'}
+                      </td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button
@@ -197,11 +212,11 @@ export default function ListDashboard() {
             </Table>
           ) : (
             <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center">
-              <p className="font-medium">{search ? 'No matching shipping bills' : 'No shipping bills yet'}</p>
+              <p className="font-medium">{search !== '' ? 'No matching shipping bills' : 'No shipping bills yet'}</p>
               <p className="mt-1 text-sm text-gray-500">
-                {search ? 'Try another job number or party name.' : 'Create a bill to start an export job.'}
+                {search !== '' ? 'Try another job number or party name.' : 'Create a bill to start an export job.'}
               </p>
-              {!search && (
+              {search === '' && (
                 <Button className="mt-4" onClick={() => navigate(routes.shippingBillNew)}>
                   Create shipping bill
                 </Button>
