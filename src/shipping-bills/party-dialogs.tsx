@@ -1,7 +1,9 @@
-import { saveBranch, saveBusiness, saveExporter } from '@/shipping-bills/demo-store'
-import { Branch, Business, countries, Exporter } from '@/shipping-bills/model'
+import { defaultShippingBillLookups, lookupService } from '@/shipping-bills/lookup-service'
+import { Branch, Business, Exporter } from '@/shipping-bills/model'
+import { partyMockService } from '@/shipping-bills/party-mock-service'
 import { InferType, s, useForm } from 'core/form'
 import { Form, SubmitButton } from 'core/form/components'
+import { useQuery } from 'core/react-query'
 import { toast } from 'core/toast-manager'
 import { Button } from 'ui/basic/button'
 import { Checkbox } from 'ui/inputs/checkbox'
@@ -34,7 +36,7 @@ const partySchema = s.object({
   countryCode: s.string()
 })
 
-type PartyFields = InferType<typeof partySchema>
+type PartyDialogFields = InferType<typeof partySchema>
 
 interface PartyDialogProps {
   kind: Kind
@@ -46,7 +48,13 @@ interface PartyDialogProps {
 
 export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: PartyDialogProps) {
   const isNew = party == null
-  const formCtx = useForm<PartyFields>(partySchema, {
+  const lookupsQuery = useQuery({
+    queryKey: ['shipping-bill-lookups'],
+    queryFn: () => lookupService.getFormLookups()
+  })
+  const lookups = lookupsQuery.data ?? defaultShippingBillLookups
+
+  const formCtx = useForm<PartyDialogFields>(partySchema, {
     defaultValues: {
       name: party?.name ?? '',
       iec: party?.iec ?? '',
@@ -71,7 +79,7 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
   })
   const { register } = formCtx.hooks
 
-  function handleSave(values: PartyFields) {
+  async function handleSave(values: PartyDialogFields) {
     const firstBranch = isNew
       ? {
           branchName: values.branchName!,
@@ -84,7 +92,7 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
       : undefined
     const saved =
       kind === 'exporter'
-        ? saveExporter({
+        ? await partyMockService.saveExporter({
             id: party?.id,
             name: values.name.trim(),
             iec: values.iec?.trim() ?? '',
@@ -97,7 +105,7 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
             notes: values.notes,
             firstBranch
           })
-        : saveBusiness({
+        : await partyMockService.saveBusiness({
             id: party?.id,
             name: values.name.trim(),
             iec: values.iec,
@@ -132,25 +140,8 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
               <Input label="IEC" {...register('iec')} />
               {kind === 'exporter' ? (
                 <>
-                  <Select<PartyFields>
-                    label="Exporter class"
-                    name="class"
-                    options={[
-                      { value: 'F', label: 'Manufacturer' },
-                      { value: 'R', label: 'Merchant' },
-                      { value: 'C', label: 'Merchant courier' },
-                      { value: 'D', label: 'Manufacturer courier' }
-                    ]}
-                  />
-                  <Select<PartyFields>
-                    label="Exporter type"
-                    name="type"
-                    options={[
-                      { value: 'P', label: 'Private' },
-                      { value: 'G', label: 'Government' },
-                      { value: 'W', label: 'Warehouse' }
-                    ]}
-                  />
+                  <Select<PartyDialogFields> label="Exporter class" name="class" options={lookups.exporterClasses} />
+                  <Select<PartyDialogFields> label="Exporter type" name="type" options={lookups.exporterTypes} />
                 </>
               ) : (
                 <div className="sm:col-span-2">
@@ -192,10 +183,10 @@ export function PartyDialog({ kind, party, initialRole, onClose, onSaved }: Part
                   <Input label="Branch name" {...register('branchName', { required: true })} />
                   <Input label="Address line 1" {...register('address1', { required: true })} />
                   <Input label="City" {...register('city', { required: true })} />
-                  <Select<PartyFields>
+                  <Select<PartyDialogFields>
                     label="Country"
                     name="countryCode"
-                    options={countries}
+                    options={lookups.countries}
                     placeholder="Select country"
                   />
                   <Input label="State / province" {...register('state')} />
@@ -231,6 +222,7 @@ const branchSchema = s.object({
   accountNo: s.string().optional(),
   ifscCode: s.string().optional()
 })
+
 type BranchFields = InferType<typeof branchSchema>
 
 interface BranchDialogProps {
@@ -242,13 +234,19 @@ interface BranchDialogProps {
 }
 
 export function BranchDialog({ kind, ownerId, branch, onClose, onSaved }: BranchDialogProps) {
+  const lookupsQuery = useQuery({
+    queryKey: ['shipping-bill-lookups'],
+    queryFn: () => lookupService.getFormLookups()
+  })
+  const lookups = lookupsQuery.data ?? defaultShippingBillLookups
+
   const formCtx = useForm<BranchFields>(branchSchema, {
     defaultValues: branch ?? { branchName: '', address1: '', city: '', countryCode: kind === 'exporter' ? 'IN' : '' }
   })
   const { register } = formCtx.hooks
 
-  function handleSave(values: BranchFields) {
-    const saved = saveBranch(kind, ownerId, { ...values, id: branch?.id })
+  async function handleSave(values: BranchFields) {
+    const saved = await partyMockService.saveBranch(kind, ownerId, { ...values, id: branch?.id })
     toast.success('Branch saved')
     onSaved?.(saved)
     onClose()
@@ -270,7 +268,7 @@ export function BranchDialog({ kind, ownerId, branch, onClose, onSaved }: Branch
               <Select<BranchFields>
                 label="Country"
                 name="countryCode"
-                options={countries}
+                options={lookups.countries}
                 placeholder="Select country"
               />
               <Input label="Email" type="email" {...register('email')} />

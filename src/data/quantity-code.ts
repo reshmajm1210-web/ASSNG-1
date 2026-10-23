@@ -48,7 +48,6 @@ export const quantityCodes = [
   { value: 'MLT', label: 'MLT - Mililitre' },
   { value: 'MOU', label: 'MOU - Millions Of Unit' },
   { value: 'MTR', label: 'MTR - Meters' },
-  { value: 'MTR', label: 'MTR - Meters' },
   { value: 'MUS', label: 'MUS - Million Units' },
 
   { value: 'NOS', label: 'NOS - Numbers' },

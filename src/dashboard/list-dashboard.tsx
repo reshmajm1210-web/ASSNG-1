@@ -1,84 +1,73 @@
 import { routes } from '@/shared/route-paths'
 import { invoiceTotal, SavedBill } from '@/shipping-bills/model'
 import { shippingBillService } from '@/shipping-bills/shipping-bill-service'
+import { useQuery } from 'core/react-query'
 import { navigate } from 'core/routing'
 import { toast } from 'core/toast-manager'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Badge } from 'ui/basic/badge'
 import { Button } from 'ui/basic/button'
 import { Card, CardContent } from 'ui/basic/card'
 import { Table } from 'ui/basic/table'
 import { Input } from 'ui/inputs/input'
+import { AlertDanger } from 'ui/notify/alert'
+import { LoadingSpinner } from 'ui/notify/loading-spinner'
 
 export default function ListDashboard() {
-  const [bills, setBills] = useState<SavedBill[]>(() => shippingBillService.getInitialBills())
   const [search, setSearch] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
-  const fetchBills = async () => {
-    setIsLoading(true)
-    try {
-      const remoteBills = await shippingBillService.list()
-      if (remoteBills && remoteBills.length > 0) {
-        setBills(remoteBills)
-        toast.success(`Loaded ${remoteBills.length} shipping bills`)
-      }
-    } catch (err: any) {
-      console.warn('Backend API listing notice:', err)
-    } finally {
-      setIsLoading(false)
+  const billsQuery = useQuery({
+    queryKey: ['shipping-bills'],
+    queryFn: () => shippingBillService.list()
+  })
+
+  const bills = billsQuery.data ?? []
+
+  async function handleRefresh() {
+    const res = await billsQuery.refetch()
+    if (res.data) {
+      toast.success(`Loaded ${res.data.length} shipping bills`)
     }
   }
 
-  useEffect(() => {
-    fetchBills()
-  }, [])
-
-  const handleDownloadFlatFile = async (bill: SavedBill) => {
+  async function handleDownloadFlatFile(bill: SavedBill) {
     try {
       setDownloadingId(bill.id)
-      const res = await shippingBillService.downloadFlatFile(bill.id, bill)
-      if (res.source === 'api') {
-        toast.success('Flat file downloaded from backend API')
-      } else {
-        toast.success(`Flat file (.sb) generated and downloaded for #${bill.values.jobNumber || bill.id}`)
-      }
-    } catch (err: any) {
-      console.warn('Flat file notice:', err)
+      await shippingBillService.downloadFlatFile(bill.id, bill)
+      const label = bill.values.jobNumber ?? bill.id
+      toast.success(`Flat file (.sb) generated and downloaded for #${label}`)
+    } catch {
       toast.error('Failed to generate flat file')
     } finally {
       setDownloadingId(null)
     }
   }
 
-  const filtered = bills
-    .filter((bill) => {
-      const exporter = bill.values.exporterName || ''
-      const consignee = bill.values.consigneeName || ''
-      return [
-        bill.id,
-        bill.values.jobNumber,
-        exporter,
-        consignee,
-        ...bill.values.invoices.map((invoice) => invoice.invoiceNumber)
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(search.toLowerCase())
-    })
-    .sort((a, b) => {
-      const timeA = a.updated ? new Date(a.updated).getTime() : 0
-      const timeB = b.updated ? new Date(b.updated).getTime() : 0
-      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA)
-    })
+  const normalizedQuery = search.trim().toLowerCase()
+  const filtered = bills.filter((bill) => {
+    if (!normalizedQuery) return true
+    const exporter = bill.values.exporterName ?? ''
+    const consignee = bill.values.consigneeName ?? ''
+    return [
+      bill.id,
+      bill.values.jobNumber,
+      exporter,
+      consignee,
+      bill.values.loadingPort,
+      bill.values.finalDestinationPort,
+      ...bill.values.invoices.map((invoice) => invoice.invoiceNumber)
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedQuery)
+  })
 
-  const uniqueExportersCount = new Set(
-    bills.map((b) => b.values.exporterName).filter(Boolean)
-  ).size
+  const uniqueExportersCount = new Set(bills.map((b) => b.values.exporterName ?? b.values.exporterId).filter(Boolean))
+    .size
 
   const uniqueConsigneesCount = new Set(
-    bills.map((b) => b.values.consigneeName).filter(Boolean)
+    bills.map((b) => b.values.consigneeName ?? b.values.consigneeId).filter(Boolean)
   ).size
 
   return (
@@ -89,8 +78,8 @@ export default function ListDashboard() {
           <p className="mt-1 text-sm text-gray-500">Create and continue the shipping bill step of each export job.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={fetchBills} disabled={isLoading}>
-            {isLoading ? 'Syncing...' : 'Sync from API'}
+          <Button variant="outline" size="sm" onClick={() => void handleRefresh()} disabled={billsQuery.isFetching}>
+            {billsQuery.isFetching ? 'Syncing...' : 'Sync from API'}
           </Button>
           <Button onClick={() => navigate(routes.shippingBillNew)}>+ New shipping bill</Button>
         </div>
@@ -100,19 +89,19 @@ export default function ListDashboard() {
         <Card>
           <CardContent className="pt-5">
             <p className="text-xs text-gray-500">Shipping bills</p>
-            <p className="mt-1 text-2xl font-semibold">{bills.length}</p>
+            <p className="mt-1 text-2xl font-semibold">{billsQuery.isLoading ? '—' : bills.length}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-5">
             <p className="text-xs text-gray-500">Exporters</p>
-            <p className="mt-1 text-2xl font-semibold">{uniqueExportersCount || 1}</p>
+            <p className="mt-1 text-2xl font-semibold">{billsQuery.isLoading ? '—' : uniqueExportersCount}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-5">
             <p className="text-xs text-gray-500">Businesses / Consignees</p>
-            <p className="mt-1 text-2xl font-semibold">{uniqueConsigneesCount || 1}</p>
+            <p className="mt-1 text-2xl font-semibold">{billsQuery.isLoading ? '—' : uniqueConsigneesCount}</p>
           </CardContent>
         </Card>
       </div>
@@ -128,11 +117,32 @@ export default function ListDashboard() {
                 placeholder="Job, invoice, exporter or consignee"
               />
             </div>
-            <span className="text-sm text-gray-500">
-              {filtered.length} {filtered.length === 1 ? 'bill' : 'bills'}
-            </span>
+            {!billsQuery.isLoading && !billsQuery.isError && (
+              <span className="text-sm text-gray-500">
+                {filtered.length} {filtered.length === 1 ? 'bill' : 'bills'}
+              </span>
+            )}
           </div>
-          {filtered.length ? (
+
+          {billsQuery.isLoading ? (
+            <LoadingSpinner message="Loading shipping bills..." />
+          ) : billsQuery.isError ? (
+            <div className="space-y-3">
+              <AlertDanger
+                title="Could not load shipping bills"
+                description={
+                  billsQuery.error instanceof Error
+                    ? billsQuery.error.message
+                    : 'An unexpected error occurred while fetching shipping bills.'
+                }
+              />
+              <div>
+                <Button variant="outline" size="sm" onClick={() => void billsQuery.refetch()}>
+                  Try again
+                </Button>
+              </div>
+            </div>
+          ) : filtered.length > 0 ? (
             <Table>
               <thead>
                 <tr>
@@ -147,9 +157,16 @@ export default function ListDashboard() {
               </thead>
               <tbody>
                 {filtered.map((bill) => {
-                  const exporterName = bill.values.exporterName || '—'
-                  const consigneeName = bill.values.consigneeName || '—'
+                  const rawExporter = bill.values.exporterName?.trim()
+                  const rawConsignee = bill.values.consigneeName?.trim()
+                  const exporterName = rawExporter !== undefined && rawExporter !== '' ? rawExporter : '—'
+                  const consigneeName = rawConsignee !== undefined && rawConsignee !== '' ? rawConsignee : '—'
+                  const loadingPortLabel = bill.values.loadingPort ? bill.values.loadingPort : '—'
+                  const destPortLabel = bill.values.finalDestinationPort ? bill.values.finalDestinationPort : '—'
                   const total = bill.values.invoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0)
+                  const updatedTime = bill.updated ? new Date(bill.updated).getTime() : Number.NaN
+                  const updatedLabel = !Number.isNaN(updatedTime) ? new Date(updatedTime).toLocaleDateString() : '—'
+
                   return (
                     <tr key={bill.id}>
                       <td className="font-medium">
@@ -161,7 +178,7 @@ export default function ListDashboard() {
                         <span className="block text-xs text-gray-500">to {consigneeName}</span>
                       </td>
                       <td>
-                        {bill.values.loadingPort || '—'} → {bill.values.finalDestinationPort || '—'}
+                        {loadingPortLabel} → {destPortLabel}
                       </td>
                       <td>
                         {bill.values.invoices.length}
@@ -172,14 +189,14 @@ export default function ListDashboard() {
                       <td>
                         <Badge variant="secondary">Draft</Badge>
                       </td>
-                      <td>{bill.updated && !isNaN(new Date(bill.updated).getTime()) ? new Date(bill.updated).toLocaleDateString() : '—'}</td>
+                      <td>{updatedLabel}</td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button
                             variant="outline"
                             size="sm"
                             disabled={downloadingId === bill.id}
-                            onClick={() => handleDownloadFlatFile(bill)}>
+                            onClick={() => void handleDownloadFlatFile(bill)}>
                             {downloadingId === bill.id ? 'Downloading...' : 'Flat File'}
                           </Button>
                           <Button
@@ -201,7 +218,11 @@ export default function ListDashboard() {
               <p className="mt-1 text-sm text-gray-500">
                 {search ? 'Try another job number or party name.' : 'Create a bill to start an export job.'}
               </p>
-              {!search && (
+              {search ? (
+                <Button variant="outline" className="mt-4" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              ) : (
                 <Button className="mt-4" onClick={() => navigate(routes.shippingBillNew)}>
                   Create shipping bill
                 </Button>
